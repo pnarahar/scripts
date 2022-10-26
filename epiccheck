@@ -1,0 +1,224 @@
+#!/bin/env perl
+
+# femtocheck
+#
+# USAGE:
+# femtocheck <listing_file>.lst [verbosity]
+#
+# Analyzes the mixed C/asm/binary listing file output from a build, and reports
+# the line numbers in the listing file of any instructions not supported by the
+# femto processor.
+
+$numArgs = $#ARGV + 1;
+if ($numArgs < 1)
+{
+   print "Usage: femtocheck <listing_file>.lst [verbosity] (verbosity:use 1 for summary of unsupported instr or 2 (default) for complete list with line numbers)\n";
+   exit;
+}
+
+$listing_file = $ARGV[0];
+
+if ($numArgs > 1)
+{
+   $verbosity    = $ARGV[1];
+}
+else
+{
+   $verbosity    = 2;  # Default to full list
+}
+
+open my $fh, '<', $listing_file or die "Cannot open $filename: $!";
+
+# List of regular expressions for supported binary instructions:
+@supported_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "00100...........................",    # ADDI, ADDIU
+   "000000...............000001000..",    # ADD, SUB, ADDU, SUBU
+   "000000...............000001001..",    # AND, NOR, OR, XOR
+   "00110...........................",    # ANDI, ORI
+   "0.0100..........................",    # B, BEQ, BEQL
+   "000001......00..................",    # BAL, BGEZ, BGEZAL, BLTZ, BLTZAL,BGEZL,BGEZALL,BLTZL,BLTZALL
+   "0.011......00000................",    # BGTZ, BLEZ, BGTZL, BLEZL
+   "0.0101..........................",    # BNE, BNEL
+   "000000....................001101",    # BREAK
+   "101111..........................",    # CACHE
+   "011100...............0000010000.",    # CLO, CLZ
+   "000000..........000000000001101.",    # DIV,DIVU
+   "01000010000000000000000000011000",    # ERET (c0 0x18)
+   "00001...........................",    # J, JAL
+   "000000.....00000..........001001",    # JALR
+   "000000.....0000000000.....001000",    # JR
+   "100.0...........................",    # LB, LBU, LH, LHU
+   "00111100000.....................",    # LUI
+   "10.011..........................",    # LW, SW
+   "10..10..........................",    # LWL, LWR, SWL, SWR
+   "01000000.00..........00000000...",    # MFC0, MTC0
+   "0000000000000000.....000000100..",    # MFHI,MFLO
+   "000000.....0000000000000000100..",    # MTHI,MTLO
+   "000000...............0000000101.",    # MOVN, MOVZ
+   "000000..........000000000001100.",    # MULT,MULTU
+   "011100...............00000000010",    # MUL
+   "011100...........000000000000.0.",    # MADD, MADDU, MSUB, MSUBU
+   "110011..........................",    # PREF
+   "10100...........................",    # SB, SH
+   "00000000000...............0000.0",    # SLL, SRL, NOP, SSNOP
+   "00000000000...............000011",    # SRA
+   "000000...............00000000111",    # SRAV
+   "000000...............0000010101.",    # SLT, SLTU
+   "00101...........................",    # SLTI, SLTIU
+   "000000...............000000001.0",    # SLLV,SRLV
+   "000000000000000000000.....001111",    # SYNC
+   "000000....................001100",    # SYSCALL
+   "000000....................1100..",    # TGE, TGEU, TLT, TLTU
+   "000000....................1101.0",    # TEQ, TNE
+   "000001.....010..................",    # TGEI, TGEIU, TLTI, TLTIU
+   "000001.....011.0................",    # TEQI, TNEI
+   "001110.........................."     # XORI
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+# List of regular expressions for unsupported binary instructions:
+# For example, these include 0 in the destination register field
+@unsupported_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "001001.....00000................",    # ADDIU
+   "000000..........00000000001000.1",    # ADDU, SUBU
+   "000000..........00000000001001..",    # AND, NOR, OR, XOR
+   "00110......00000................",    # ANDI, ORI
+   #"000100..........................",    # B, BEQ
+   #"000001......000.................",    # BAL, BGEZ, GEZAL, BLTZ, BLTZAL
+   #"00011......00000................",    # BGTZ, BLEZ
+   #"000101..........................",    # BNE
+   #"000000....................001101",    # BREAK
+   #"01000010000000000000000000011000",    # ERET
+   #"00001...........................",    # J, JAL
+   "000000.....0000000000.....001001",    # JALR
+   #"000000.....0000000000.....001000",    # JR
+   "100.0......00000................",    # LB, LBU, LH, LHU
+   "0011110000000000................",    # LUI
+   "100011.....00000................",    # LW
+   #"10100...........................",    # SB, SH
+   "00000000000.....00000.....0000.0",    # SLL, SRL, NOP, SSNOP
+   "000000..........000000000010101.",    # SLT, SLTU
+   "00101......00000................",    # SLTI, SLTIU
+   "001110.....00000................"     # XORI
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+# List of regular expressions for exceptions to the unsupported list:
+# For example, NOP writes r0.
+@unsupported_exc_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "000000000000000000000.....0000.0",    # SLL, SRL, NOP, SSNOP: read and write r0
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+%hex2bin = (0 => "0000", 1 => "0001", 2 => "0010", 3 => "0011",
+            4 => "0100", 5 => "0101", 6 => "0110", 7 => "0111", 
+            8 => "1000", 9 => "1001", a => "1010", b => "1011", 
+            c => "1100", d => "1101", e => "1110", f => "1111",
+);
+
+$line = 1;
+$instructions = 0;
+$unsupported_cnt = 0;
+$unique_instr_idx = 0;
+$found = 0;
+@num = (0) x 20;
+while (<$fh>)  # Repeat for each line in the file
+{
+   # print $line, " ", $_;
+   @tokens = split(' ', $_);
+   $_ = @tokens[0];
+   if (/^[0-9a-f]+:$/)  # Line with binary (First token is hex addr followed by ':')
+   {
+      #print $_;
+      $no_more_inst = 0;
+      
+      foreach $i(1..4)  # Up to 4 instructions per line after the address
+      {
+         $_ = @tokens[$i];
+         if (/^[0-9a-f]{8}$/ && !$no_more_inst)  # We only care about instructions,
+                                                 # which are hex numbers immediately
+                                                 # following the address.
+         {
+            $instruction = $_;
+            ($inst_bin = $_) =~ s/(.)/$hex2bin{lc $1}/g; # Convert inst to binary
+            #print " ", $instruction;
+            #print " ", $inst_bin;
+            $instructions = $instructions + 1;
+            
+            $supported = 0;
+            foreach (@supported_list)  # Search supported list for this instruction
+            {
+               if ($inst_bin =~ /$_/)
+               {
+                  $supported = 1;
+                  #print "\nLine ", $line, ", supported instruction: \n", $inst_bin, "\n", $_;
+                  
+                  foreach (@unsupported_list)  # Search unsupported list for this instruction
+                  {
+                     if ($inst_bin =~ /$_/)
+                     {
+                        $supported = 0;
+                        #print "\nLine ", $line, ", in unsupported list: \n", $inst_bin, "\n", $_;
+                     
+                        foreach (@unsupported_exc_list)  # Search unsupported exception list for this instruction
+                        {
+                           if ($inst_bin =~ /$_/)
+                           {
+                              $supported = 1;
+                              #print "\nLine ", $line, ", in unsupported exception list: \n", $inst_bin, "\n", $_;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+            if (!$supported)
+            {
+               if ($verbosity>1)
+               {
+                  print $listing_file, ":", $line, ": unsupported instruction: ", $instruction, "\n";
+               }
+               
+               #print @tokens[2], "\n";
+               foreach $j(0..$unique_instr_idx)    # Search for instr in existing counterss
+               {	
+                  #print @tokens[2], "	";
+                  #print @op_code[$j], "\n";
+                  if(@tokens[2] eq @op_code[$j])
+                  {
+                     $found = 1;
+                     @num[$j] = @num[$j] + 1;
+                     #print @num, "\n";
+                  }
+               }
+               if (!$found)   # Need a new counter for this instruction
+               {
+                  $unique_instr_idx = $unique_instr_idx + 1;
+                  #print $unique_instr_idx;
+                  @op_code[$unique_instr_idx] = @tokens[2];
+                  @num[$unique_instr_idx] = 1;
+               }
+               $unsupported_cnt = $unsupported_cnt + 1;
+            }
+         }
+         else
+         {
+            $no_more_inst = 1;
+         }
+      }
+      #print "\n";
+   }
+   $line = $line + 1; 
+   $found = 0;
+}
+#print "Lines: ", $line, "\n";
+foreach $m(1..$unique_instr_idx)
+{
+   print @op_code[$m], "	", @num[$m], "\n";
+}
+print "Unsupported Instructions: ", $unsupported_cnt, "\n";
+print "Instructions: ", $instructions, "\n ";
+
