@@ -1,0 +1,216 @@
+#!/bin/env perl
+
+# riscv_parser
+#
+# USAGE:
+# riscv_parser <listing_file>.lst [verbosity]
+#
+# Analyzes the mixed C/asm/binary listing file output from a build, and reports
+# the line numbers in the listing file of any instructions not supported by the
+# riscv processor.
+
+$numArgs = $#ARGV + 1;
+if ($numArgs < 1)
+{
+   print "Usage: riscv_parser <listing_file>.lst [verbosity] (verbosity:use 1 for summary of unsupported instr or 2 (default) for complete list with line numbers)\n";
+   exit;
+}
+
+$listing_file = $ARGV[0];
+
+if ($numArgs > 1)
+{
+   $verbosity    = $ARGV[1];
+}
+else
+{
+   $verbosity    = 2;  # Default to full list
+}
+
+
+my %HASH;
+my %STAT_HASH;
+open my $fh, '<', $listing_file or die "Cannot open $filename: $!";
+
+# List of regular expressions for supported binary instructions:
+@supported_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "00100...........................",    # ADDI, ADDIU
+   "000000...............000001000..",    # ADD, SUB, ADDU, SUBU
+   "000000...............000001001..",    # AND, NOR, OR, XOR
+   "00110...........................",    # ANDI, ORI
+   "0.0100..........................",    # B, BEQ, BEQL
+   "000001......00..................",    # BAL, BGEZ, BGEZAL, BLTZ, BLTZAL,BGEZL,BGEZALL,BLTZL,BLTZALL
+   "0.011......00000................",    # BGTZ, BLEZ, BGTZL, BLEZL
+   "0.0101..........................",    # BNE, BNEL
+   "000000....................001101",    # BREAK
+   "101111..........................",    # CACHE
+   "011100...............0000010000.",    # CLO, CLZ
+   "000000..........000000000001101.",    # DIV,DIVU
+   "01000010000000000000000000011000",    # ERET (c0 0x18)
+   "00001...........................",    # J, JAL
+   "000000.....00000..........001001",    # JALR
+   "000000.....0000000000.....001000",    # JR
+   "100.0...........................",    # LB, LBU, LH, LHU
+   "00111100000.....................",    # LUI
+   "10.011..........................",    # LW, SW
+   "10..10..........................",    # LWL, LWR, SWL, SWR
+   "01000000.00..........00000000...",    # MFC0, MTC0
+   "0000000000000000.....000000100..",    # MFHI,MFLO
+   "000000.....0000000000000000100..",    # MTHI,MTLO
+   "000000...............0000000101.",    # MOVN, MOVZ
+   "000000..........000000000001100.",    # MULT,MULTU
+   "011100...............00000000010",    # MUL
+   "011100...........000000000000.0.",    # MADD, MADDU, MSUB, MSUBU
+   "110011..........................",    # PREF
+   "10100...........................",    # SB, SH
+   "00000000000...............0000.0",    # SLL, SRL, NOP, SSNOP
+   "00000000000...............000011",    # SRA
+   "000000...............00000000111",    # SRAV
+   "000000...............0000010101.",    # SLT, SLTU
+   "00101...........................",    # SLTI, SLTIU
+   "000000...............000000001.0",    # SLLV,SRLV
+   "000000000000000000000.....001111",    # SYNC
+   "000000....................001100",    # SYSCALL
+   "000000....................1100..",    # TGE, TGEU, TLT, TLTU
+   "000000....................1101.0",    # TEQ, TNE
+   "000001.....010..................",    # TGEI, TGEIU, TLTI, TLTIU
+   "000001.....011.0................",    # TEQI, TNEI
+   "001110.........................."     # XORI
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+# List of regular expressions for unsupported binary instructions:
+# For example, these include 0 in the destination register field
+@unsupported_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "001001.....00000................",    # ADDIU
+   "000000..........00000000001000.1",    # ADDU, SUBU
+   "000000..........00000000001001..",    # AND, NOR, OR, XOR
+   "00110......00000................",    # ANDI, ORI
+   #"000100..........................",    # B, BEQ
+   #"000001......000.................",    # BAL, BGEZ, GEZAL, BLTZ, BLTZAL
+   #"00011......00000................",    # BGTZ, BLEZ
+   #"000101..........................",    # BNE
+   #"000000....................001101",    # BREAK
+   #"01000010000000000000000000011000",    # ERET
+   #"00001...........................",    # J, JAL
+   "000000.....0000000000.....001001",    # JALR
+   #"000000.....0000000000.....001000",    # JR
+   "100.0......00000................",    # LB, LBU, LH, LHU
+   "0011110000000000................",    # LUI
+   "100011.....00000................",    # LW
+   #"10100...........................",    # SB, SH
+   "00000000000.....00000.....0000.0",    # SLL, SRL, NOP, SSNOP
+   "000000..........000000000010101.",    # SLT, SLTU
+   "00101......00000................",    # SLTI, SLTIU
+   "001110.....00000................"     # XORI
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+# List of regular expressions for exceptions to the unsupported list:
+# For example, NOP writes r0.
+@unsupported_exc_list = (
+   #[    ][   ][   ][   ][   ][    ]
+   "000000000000000000000.....0000.0",    # SLL, SRL, NOP, SSNOP: read and write r0
+   #[    ][   ][   ][   ][   ][    ]
+);
+
+%hex2bin = (0 => "0000", 1 => "0001", 2 => "0010", 3 => "0011",
+            4 => "0100", 5 => "0101", 6 => "0110", 7 => "0111", 
+            8 => "1000", 9 => "1001", a => "1010", b => "1011", 
+            c => "1100", d => "1101", e => "1110", f => "1111",
+);
+
+$line = 1;
+$instructions = 0;
+$unsupported_cnt = 0;
+$unique_instr_idx = 0;
+$found = 0;
+@num = (0) x 20;
+my $code_size;
+my $NUM_4_Byte_Inst,$NUM_2_Byte_Inst;
+while (<$fh>)  # Repeat for each line in the file
+{
+   # print $line, " ", $_;
+   @tokens = split(' ', $_);
+   $_ = @tokens[0];
+   if (/^[0-9a-f]+:$/)  # Line with binary (First token is hex addr followed by ':')
+   {
+      #print "$_\n";
+      #print "\n";
+      $no_more_inst = 0;
+      $code_size = $code_size + (length(@tokens[1]) / 2);
+      $HASH{@tokens[2]}++;
+     #if((@tokens[2] eq 'lw') or (@tokens[2] eq 'lh') or (@tokens[2] eq 'lb') or (@tokens[2] eq 'lhu') or (@tokens[2] eq 'lbu'))
+     # { 
+     #    print "LW mnemonic matched\n"
+     # }
+#Number of Mem writes
+#Number of Mem reads
+#Number of MAC op
+#Number of control
+     $_ = @tokens[1];
+     ($inst_bin = $_) =~ s/(.)/$hex2bin{lc $1}/g; # Convert inst to binary  
+      #print "$_\n";
+      #print "\n";
+      #print "$inst_bin\n";
+      if(length($inst_bin) eq 32) 
+       {
+        $sub_string1 = substr ($inst_bin,length($inst_bin) - 7);
+        $sub_string2 = substr ($inst_bin,0,7);
+
+       }
+      else 
+       {
+        $sub_string1 = substr ($inst_bin,length($inst_bin) - 2);
+        $sub_string2 = substr ($inst_bin,0,3);
+        $sub_string3 = substr ($inst_bin,0,8);
+       }
+      if(length($inst_bin) eq 32)
+          {  $NUM_4_Byte_Inst++;}
+      elsif(length($inst_bin) eq 16)
+          {  $NUM_2_Byte_Inst++;}
+      # Printing the substring
+      #print "Substring 1 : $sub_string1\n";
+      if( ($sub_string1  eq '0000011') or ((($sub_string1  eq '10') or ($sub_string1  eq '00')) and (($sub_string2  eq '010') or ($sub_string2  eq '011')))) 
+           {
+            #print "LW matched\n";
+            $STAT_HASH{"MEM_RD"}++;
+           }
+      elsif (($sub_string1  eq '0100011') or ((($sub_string1  eq '10') or ($sub_string1  eq '00')) and (($sub_string2  eq '110') or ($sub_string2  eq '101') )))
+           {
+            $STAT_HASH{"MEM_WR"}++;
+           }
+      elsif(($sub_string1  eq '0110011') and ($sub_string2  eq '0000001'))
+           {
+            $STAT_HASH{"MAC_OP"}++;
+           }
+      elsif((($sub_string1  eq '1100011') or ($sub_string1  eq '1100111') or ($sub_string1  eq '1101111')) or
+           ((($sub_string1  eq '01') and (($sub_string2  eq '001') or ($sub_string2  eq '101') or ($sub_string2  eq '110') or ($sub_string2  eq '111')))) or            
+           (($sub_string1  eq '10') and ($sub_string3  eq '10000000')))
+           {
+            $STAT_HASH{"CTRL"}++;
+           }
+
+   }
+}
+while((my $key, my $value)= each %HASH){
+      #printf "$key\t\t\t\t\t$owner{$key}\t\t\t\t\t$value \n";
+      printf "%-50s | %-30s\n",$key,$value;
+       $count=$count+$value;
+}
+print "Total Instructions $count\n";
+
+my $tot_mem_rd=  $STAT_HASH{"MEM_RD"};
+my $tot_mem_wr=  $STAT_HASH{"MEM_WR"};
+my $tot_mac= $STAT_HASH{"MAC_OP"};
+my $tot_ctrl= $STAT_HASH{"CTRL"};
+
+print "Total Memory Read $tot_mem_rd\n";
+print "Total Memory Write $tot_mem_wr\n";
+print "Total MAC Operations $tot_mac\n";
+print "Total CTRL Operations $tot_ctrl\n";
+print "Total 2 Byte Instructions $NUM_2_Byte_Inst\n";
+print "Total 4 Byte Instructions $NUM_4_Byte_Inst\n";
+print "Code Size $code_size\n";
