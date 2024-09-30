@@ -1,0 +1,134 @@
+{
+    "sdp_req0": [
+        {
+            "field": "req0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "req1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "req2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "req3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ],
+    "sdp_addr0": [
+        {
+            "field": "addr0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "addr1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "addr2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "addr3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ],
+    "sdp_req1": [
+        {
+            "field": "req0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "req1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "req2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "req3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ],
+    "sdp_addr1": [
+        {
+            "field": "addr0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "addr1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "addr2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "addr3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ],
+    "sdp_req2": [
+        {
+            "field": "req0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "req1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "req2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "req3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ],
+    "sdp_addr2": [
+        {
+            "field": "addr0",
+            "msb": 63,
+            "lsb": 48
+        },
+        {
+            "field": "addr1",
+            "msb": 47,
+            "lsb": 32
+        },
+        {
+            "field": "addr2",
+            "msb": 31,
+            "lsb": 16
+        },
+        {
+            "field": "addr3",
+            "msb": 15,
+            "lsb": 0
+        }
+    ]
+}
